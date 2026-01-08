@@ -1,0 +1,12 @@
+fastapi
+uvicorn[standard]
+pillow
+pytesseract
+requests
+pydantic
+pydantic-settings
+sqlalchemy
+psycopg2-binary
+pandas
+openpyxl
+together

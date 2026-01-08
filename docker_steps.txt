@@ -1,0 +1,47 @@
+Solution Steps
+1. Create a User-Defined Network
+Open a command prompt/PowerShell and run:
+
+powershell
+docker network create nw_fitin50
+2. Re-create Containers on This Network
+Stop and remove both containers if they are already running:
+
+powershell
+docker stop my_postgres my_pgadmin
+docker rm my_postgres my_pgadmin
+Start your PostgreSQL container on the user-defined network:
+
+powershell
+docker run -d ^
+  --network nw_fitin50 ^
+  --name db_fitin50 ^
+  -e POSTGRES_USER=postgres ^
+  -e POSTGRES_PASSWORD=postgres ^
+  -v C:\Data\CodeNaman\database\data:/var/lib/postgresql/data ^
+  -v C:\Data\CodeNaman\database\init.sql:/docker-entrypoint-initdb.d/init.sql ^
+  -p 5432:5432 ^
+  postgres
+  
+  
+Start your pgAdmin container on the same network:
+
+powershell
+docker run -d ^
+  --network mynetwork ^
+  --name my_pgadmin ^
+  -e PGADMIN_DEFAULT_EMAIL=admin@example.com ^
+  -e PGADMIN_DEFAULT_PASSWORD=admin123 ^
+  -p 8080:80 ^
+  -v C:\Data\CodeNaman\pgadmin-data:/var/lib/pgadmin ^
+  dpage/pgadmin4
+3. Update pgAdmin Connection Settings
+In pgAdmin, now use:
+
+Host name/address: my_postgres
+
+Port: 5432
+
+Username: postgres
+
+Password: postgres
