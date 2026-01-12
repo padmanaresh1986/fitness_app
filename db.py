@@ -22,6 +22,10 @@ from sqlalchemy import create_engine
 from git_push import push_excel_to_github
 from models import HealthData, ImageResult
 
+
+from dotenv import load_dotenv
+load_dotenv()
+
 # Example: postgresql://user:password@localhost:5432/fitin50
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
@@ -125,8 +129,8 @@ def save_results_to_db(
 
     github_url = push_excel_to_github(
         local_file_path=excel_path,
-        github_token="",
-        owner="",
+        github_token=os.getenv("GITHUB_API_KEY"),
+        owner="krishnasabbu",
         repo="fitness-challenge",
         repo_file_path=f"data/{date_folder}/{file_name}"
     )
@@ -137,8 +141,8 @@ def save_results_to_db(
 
     github_leaderboard_url = push_excel_to_github(
         local_file_path=output_leader_folder,
-        github_token="",
-        owner="",
+        github_token= os.getenv("GITHUB_API_KEY"),
+        owner="krishnasabbu",
         repo="fitness-challenge",
         repo_file_path=f"data/{date_folder}/leaderboard.xlsx"
     )
@@ -207,7 +211,7 @@ def generate_leaderboard(data_folder: str, output_folder: str):
     # Traverse all files in the data_folder (including date subfolders)
     for root, dirs, files in os.walk(data_folder):
         for file in files:
-            if file.endswith(".xlsx") or file.endswith(".xls"):
+            if file.startswith("fitness") and file.endswith(".xlsx"):
                 file_path = os.path.join(root, file)
                 try:
                     # Read the Daily Summary sheet

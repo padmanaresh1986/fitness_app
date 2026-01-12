@@ -35,11 +35,13 @@ def build_extraction_prompt(text: str) -> str:
     - workout_type ("cardio", "sport", "strength_training", "yoga", or null)
 
     Workout_type rules:
-    - "cardio": walk, run, treadmill, cycling, or generic workouts
+    - "cardio": run, treadmill, cycling, or generic workouts except walking
     - "sport": games like cricket, football, basketball, tennis, etc.
     - "strength_training": gym, weights, resistance, bodyweight exercises
     - "yoga": yoga, stretching, meditation
     - null: if no workout described
+    - IMPORTANT if you are not clear about the workout type, then make it null.
+    - IMPORTANT if there is no walking or steps mentioned, make steps null.
 
     Text:
     {text}
@@ -78,7 +80,7 @@ def call_togather_ai(prompt: str) -> str:
     client = Together(api_key=os.getenv("TOGETHER_API_KEY"))
 
     response = client.chat.completions.create(
-        model="ServiceNow-AI/Apriel-1.6-15b-Thinker",
+        model="google/gemma-3n-E4B-it",
         messages=[
             {
                 "role": "user",
@@ -160,7 +162,7 @@ def extract_health_data_from_text(text: str) -> HealthData:
     health = parse_health_json(raw)
     return health
 
-def calculate_points(steps: int, workout_type: str) -> int:
+def calculate_points(steps: int = 0 , workout_type: str = '') -> int:
     # Workout points mapping
     workout_points = {
         "sport": 300,                # Any Sport
