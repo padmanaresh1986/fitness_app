@@ -181,6 +181,12 @@ def save_results_to_db(
     return inserted_ids
 
 
+import os
+import pandas as pd
+import numpy as np
+from datetime import datetime
+
+
 def export_records_to_excel(records: list[dict], output_dir="."):
     """
     Sheet 1: Raw daily data
@@ -196,35 +202,62 @@ def export_records_to_excel(records: list[dict], output_dir="."):
     file_name = f"fitness_data_{timestamp}.xlsx"
     file_path = os.path.join(output_dir, file_name)
 
+    # -------------------------
     # Prepare summary sheet
+    # -------------------------
     summary_df = (
         df.groupby("email", as_index=False)
         .agg({
-            "steps": "sum",
+            "steps": "max",  # highest steps per user
             "calories_kcal": "sum",
             "distance_km": "sum",
             "active_time_minutes": "sum",
-            "total_points": "sum",
+            "total_points": "sum",  # base points
             "workout_type": lambda x: ", ".join(sorted(set(filter(None, x))))
         })
     )
 
-    # Rename columns for clarity (optional but recommended)
+    # -------------------------
+    # Step points calculation
+    # -------------------------
+    summary_df["step_points"] = np.select(
+        [
+            summary_df["steps"] <= 5000,
+            summary_df["steps"] <= 8000,
+            summary_df["steps"] <= 10000,
+            summary_df["steps"] <= 15000,
+            summary_df["steps"] <= 20000,
+        ],
+        [25, 35, 80, 150, 300],
+        default=500
+    )
+
+    # Add step points to total points
+    summary_df["total_points"] += summary_df["step_points"]
+
+    # Optional: remove step_points column from final output
+    summary_df.drop(columns=["step_points"], inplace=True)
+
+    # -------------------------
+    # Rename columns for clarity
+    # -------------------------
     summary_df.rename(columns={
         "steps": "total_steps",
         "calories_kcal": "total_calories_kcal",
         "distance_km": "total_distance_km",
         "active_time_minutes": "total_active_time_minutes",
-        "total_points": "total_points",
         "workout_type": "workout_types"
     }, inplace=True)
 
-    # Write both sheets
+    # -------------------------
+    # Write Excel file
+    # -------------------------
     with pd.ExcelWriter(file_path, engine="xlsxwriter") as writer:
         df.to_excel(writer, sheet_name="Daily Data", index=False)
         summary_df.to_excel(writer, sheet_name="Daily Summary", index=False)
 
     return file_path, file_name
+
 
 
 def generate_leaderboard(data_folder: str, output_folder: str):

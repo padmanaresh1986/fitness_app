@@ -188,4 +188,4 @@ def calculate_points(steps: int = 0 , workout_type: str = '') -> int:
     # Workout points (0 if no valid workout)
     workout_score = workout_points.get(workout_type, 0)
 
-    return step_points + workout_score
+    return workout_score
