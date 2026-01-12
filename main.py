@@ -49,10 +49,10 @@ app.add_middleware(
 
 
 #@app.on_event("startup")
-def on_startup():
-    # Ensure tables exist (optional if you run SQL manually)
-    create_tables()
-    logger.info("Database tables ensured.")
+# def on_startup():
+#     # Ensure tables exist (optional if you run SQL manually)
+#     create_tables()
+#     logger.info("Database tables ensured.")
 
 
 @app.post("/process-folder", response_model=ProcessFolderResponse)
@@ -123,7 +123,7 @@ def process_folder(req: ProcessFolderRequest):
             )
         )
 
-    # Save to Postgres
+    #Save to Postgres
     try:
         inserted_ids = save_results_to_db(folder_name, results)
         logger.info(
@@ -145,55 +145,55 @@ def process_folder(req: ProcessFolderRequest):
     )
 
 
-@app.get("/export-folder/{folder_name}")
-def export_folder_to_excel(folder_name: str):
-    """
-    Export all records for a given folder_name from Postgres to an Excel file.
-    Returns the Excel file for download.
-    """
-    # Query DB
-    with get_db() as db:
-        rows = (
-            db.query(FitIn50Workout)
-            .filter(FitIn50Workout.folder_name == folder_name)
-            .order_by(FitIn50Workout.id.asc())
-            .all()
-        )
-
-    if not rows:
-        raise HTTPException(
-            status_code=404,
-            detail=f"No records found for folder_name={folder_name}",
-        )
-
-    # Build DataFrame
-    data = []
-    for r in rows:
-        data.append(
-            {
-                "id": r.id,
-                "folder_name": r.folder_name,
-                "filename": r.filename,
-                "steps": r.steps,
-                "calories_kcal": r.calories_kcal,
-                "distance_km": r.distance_km,
-                "active_time_minutes": r.active_time_minutes,
-                "workout_type": r.workout_type,
-                "created_at": r.created_at,
-            }
-        )
-
-    df = pd.DataFrame(data)
-
-    # Create Excel file in a temp location
-    export_dir = Path(settings.DOWNLOAD_ROOT_DIR) / "exports"
-    export_dir.mkdir(parents=True, exist_ok=True)
-    excel_path = export_dir / f"{folder_name}.xlsx"
-
-    df.to_excel(excel_path, index=False, engine="openpyxl")
-
-    return FileResponse(
-        path=str(excel_path),
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        filename=f"{folder_name}.xlsx",
-    )
+# @app.get("/export-folder/{folder_name}")
+# def export_folder_to_excel(folder_name: str):
+#     """
+#     Export all records for a given folder_name from Postgres to an Excel file.
+#     Returns the Excel file for download.
+#     """
+#     # Query DB
+#     with get_db() as db:
+#         rows = (
+#             db.query(FitIn50Workout)
+#             .filter(FitIn50Workout.folder_name == folder_name)
+#             .order_by(FitIn50Workout.id.asc())
+#             .all()
+#         )
+#
+#     if not rows:
+#         raise HTTPException(
+#             status_code=404,
+#             detail=f"No records found for folder_name={folder_name}",
+#         )
+#
+#     # Build DataFrame
+#     data = []
+#     for r in rows:
+#         data.append(
+#             {
+#                 "id": r.id,
+#                 "folder_name": r.folder_name,
+#                 "filename": r.filename,
+#                 "steps": r.steps,
+#                 "calories_kcal": r.calories_kcal,
+#                 "distance_km": r.distance_km,
+#                 "active_time_minutes": r.active_time_minutes,
+#                 "workout_type": r.workout_type,
+#                 "created_at": r.created_at,
+#             }
+#         )
+#
+#     df = pd.DataFrame(data)
+#
+#     # Create Excel file in a temp location
+#     export_dir = Path(settings.DOWNLOAD_ROOT_DIR) / "exports"
+#     export_dir.mkdir(parents=True, exist_ok=True)
+#     excel_path = export_dir / f"{folder_name}.xlsx"
+#
+#     df.to_excel(excel_path, index=False, engine="openpyxl")
+#
+#     return FileResponse(
+#         path=str(excel_path),
+#         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+#         filename=f"{folder_name}.xlsx",
+#     )

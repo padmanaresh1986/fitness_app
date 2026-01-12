@@ -88,40 +88,69 @@ def save_results_to_db(
 
     excel_records: List[dict] = []  # ✅ dicts, not ORM objects
 
-    with get_db() as db:
-        for r in results:
-            h: HealthData = r.health_data
+    # with get_db() as db:
+    #     for r in results:
+    #         h: HealthData = r.health_data
+    #
+    #         row = FitIn50Workout(
+    #             folder_name=folder_name,
+    #             filename=r.filename,
+    #             email = r.filename.partition('_')[0],
+    #             steps=h.steps,
+    #             calories_kcal=h.calories_kcal,
+    #             distance_km=h.distance_km,
+    #             active_time_minutes=h.active_time_minutes,
+    #             workout_type=h.workout_type,
+    #             total_points=h.total_points,
+    #         )
+    #         db.add(row)
+    #         db.flush()  # get primary key
+    #         inserted_ids.append(row.id)
+    #
+    #         # ✅ Convert to dict WHILE SESSION IS OPEN
+    #         excel_records.append({
+    #             "folder_name": row.folder_name,
+    #             "filename": row.filename,
+    #             "email": row.email,
+    #             "steps": row.steps,
+    #             "calories_kcal": row.calories_kcal,
+    #             "distance_km": row.distance_km,
+    #             "active_time_minutes": row.active_time_minutes,
+    #             "workout_type": row.workout_type,
+    #             "total_points": row.total_points,
+    #             "created_at": row.created_at,
+    #         })
+    #
+    #     db.commit()  # ✅ IMPORTANT
+    #
+    for r in results:
+        h: HealthData = r.health_data
 
-            row = FitIn50Workout(
-                folder_name=folder_name,
-                filename=r.filename,
-                email = r.filename.partition('_')[0],
-                steps=h.steps,
-                calories_kcal=h.calories_kcal,
-                distance_km=h.distance_km,
-                active_time_minutes=h.active_time_minutes,
-                workout_type=h.workout_type,
-                total_points=h.total_points,
-            )
-            db.add(row)
-            db.flush()  # get primary key
-            inserted_ids.append(row.id)
+        row = FitIn50Workout(
+            folder_name=folder_name,
+            filename=r.filename,
+            email=r.filename.partition('_')[0],
+            steps=h.steps,
+            calories_kcal=h.calories_kcal,
+            distance_km=h.distance_km,
+            active_time_minutes=h.active_time_minutes,
+            workout_type=h.workout_type,
+            total_points=h.total_points,
+        )
 
-            # ✅ Convert to dict WHILE SESSION IS OPEN
-            excel_records.append({
-                "folder_name": row.folder_name,
-                "filename": row.filename,
-                "email": row.email,
-                "steps": row.steps,
-                "calories_kcal": row.calories_kcal,
-                "distance_km": row.distance_km,
-                "active_time_minutes": row.active_time_minutes,
-                "workout_type": row.workout_type,
-                "total_points": row.total_points,
-                "created_at": row.created_at,
-            })
-
-        db.commit()  # ✅ IMPORTANT
+        # ✅ Convert to dict WHILE SESSION IS OPEN
+        excel_records.append({
+            "folder_name": row.folder_name,
+            "filename": row.filename,
+            "email": row.email,
+            "steps": row.steps,
+            "calories_kcal": row.calories_kcal,
+            "distance_km": row.distance_km,
+            "active_time_minutes": row.active_time_minutes,
+            "workout_type": row.workout_type,
+            "total_points": row.total_points,
+            "created_at": row.created_at,
+        })
 
     date_folder = folder_name
 

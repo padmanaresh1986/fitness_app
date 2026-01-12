@@ -28,20 +28,20 @@ def build_extraction_prompt(text: str) -> str:
     Return ONLY valid JSON. No text, no markdown, no explanations.
 
     From the text below, extract the following fields:
-    - steps (number, null if not available)
-    - calories_kcal (number, null if not available)
-    - distance_km (number, null if not available)
-    - active_time_minutes (number, null if not available)
-    - workout_type ("cardio", "sport", "strength_training", "yoga", or null)
+    - steps (number, 0 if not available)
+    - calories_kcal (number, 0 if not available)
+    - distance_km (number, 0 if not available)
+    - active_time_minutes (number, 0 if not available)
+    - workout_type ("cardio", "sport", "strength_training", "yoga", or empty string if not available)
 
     Workout_type rules:
-    - "cardio": run, treadmill, cycling, or generic workouts except walking
-    - "sport": games like cricket, football, basketball, tennis, etc.
-    - "strength_training": gym, weights, resistance, bodyweight exercises
+    - "cardio": run, treadmill, cycling, walking
+    - "sport": games like cricket, football, basketball, tennis, table tennis, etc.
+    - "strength_training": gym, weights, resistance, bodyweight exercises, dance, HIIT
     - "yoga": yoga, stretching, meditation
     - null: if no workout described
     - IMPORTANT if you are not clear about the workout type, then make it null.
-    - IMPORTANT if there is no walking or steps mentioned, make steps null.
+    - IMPORTANT if there is no walking or steps mentioned, make steps 0.
 
     Text:
     {text}
