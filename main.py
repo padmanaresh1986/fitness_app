@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
 import pandas as pd
+from pydantic import BaseModel
 
 from config import settings
 from local_images import list_folder_images
@@ -24,7 +25,7 @@ from db import (
     create_tables,
     save_results_to_db,
     FitIn50Workout,
-    get_db,
+    get_db, update_results_to_excel, generate_daily_summary,
 )
 
 logging.basicConfig(
@@ -46,6 +47,16 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+class UpdateFolderRequest(BaseModel):
+    folder_name: str
+    destination_folder: str
+
+class UpdateFolderResponse(BaseModel):
+    folder_name: str
+    destination_folder: str
+    new_images_processed: int
+    results: List[ImageResult]
 
 
 #@app.on_event("startup")
@@ -143,6 +154,266 @@ def process_folder(req: ProcessFolderRequest):
         images_processed=len(results),
         results=results,
     )
+
+@app.post("/update_total_points", response_model=ProcessFolderResponse)
+def update_total_points(req: ProcessFolderRequest):
+    """
+       1. Read all image files from local Google Drive Desktop folder:
+            <LOCAL_DRIVE_BASE>/<folder_name>
+          Example: G:\\My Drive\\06-01-2026
+       2. Run OCR on each image.
+       3. Use local Ollama (llama3.1) to parse health stats into JSON.
+       4. Store each image result as a row in Postgres.
+       5. Return structured response.
+       """
+    folder_name = req.folder_name
+
+    try:
+        logger.info("Listing images for local folder_name=%s", folder_name)
+        image_paths: List[Path] = list_folder_images(folder_name)
+    except FileNotFoundError as e:
+        logger.warning("Folder not found: %s", e)
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.exception("Failed to list images from local folder")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error reading local folder: {e}",
+        )
+
+    if not image_paths:
+        logger.warning("No images found for folder_name=%s", folder_name)
+        return ProcessFolderResponse(
+            folder_name=folder_name,
+            images_processed=0,
+            results=[],
+        )
+
+    results: List[ImageResult] = []
+
+    for img_path in image_paths:
+        logger.info("Processing image: %s", img_path)
+        try:
+            text = ocr_image(img_path)
+        except Exception:
+            logger.exception("OCR failed for image %s", img_path)
+            # Skip this image; continue with others
+            continue
+
+        try:
+            health_data = extract_health_data_from_text(text)
+        except LLMExtractionError as e:
+            logger.warning("LLM extraction failed for image %s: %s", img_path, e)
+            raise HTTPException(
+                status_code=500,
+                detail=f"LLM JSON extraction failed for image {img_path.name}: {e}",
+            )
+        except Exception as e:
+            logger.exception("Unexpected LLM error for image %s", img_path)
+            raise HTTPException(
+                status_code=500,
+                detail=f"Unexpected LLM error for image {img_path.name}: {e}",
+            )
+
+        results.append(
+            ImageResult(
+                filename=img_path.name,
+                raw_text=text,
+                health_data=health_data,
+            )
+        )
+
+    # Save to Postgres
+    try:
+        inserted_ids = save_results_to_db(folder_name, results)
+        logger.info(
+            "Saved %d rows to Postgres for folder_name=%s",
+            len(inserted_ids),
+            folder_name,
+        )
+    except Exception as e:
+        logger.exception("Failed to save results to Postgres")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error saving results to database: {e}",
+        )
+
+    return ProcessFolderResponse(
+        folder_name=folder_name,
+        images_processed=len(results),
+        results=results,
+    )
+
+
+
+@app.post("/update-folder", response_model=UpdateFolderResponse)
+def update_folder(req: UpdateFolderRequest):
+    """
+    1. Go to destination folder: req.destination_folder
+       - Find Excel file starting with "fitness"
+    2. Read sheet "daily data" and collect all processed image names.
+    3. Go to source folder: req.folder_name
+       - For every image not already processed:
+           - Perform OCR
+           - Parse health data
+           - Append a row to the "daily data" sheet
+    4. Save Excel file.
+    5. Return updated results.
+    """
+    source_folder = req.folder_name
+    dest_folder = "C:\\Data\\fitin50\\project\\fitin50-api\\data\\2026-01-26"
+
+    # ---- FIND FITNESS EXCEL IN DESTINATION ----
+    try:
+        logger.info("Listing files at destination_folder=%s", dest_folder)
+        dest_files = list_local_files(dest_folder)
+    except FileNotFoundError as e:
+        logger.warning("Destination folder not found: %s", e)
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.exception("Failed to list files from destination folder")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error reading destination folder: {e}",
+        )
+
+    # Find a file that starts with "fitness" (case insensitive)
+    fitness_file_name = next(
+        (f for f in dest_files if f.lower().startswith("fitness") and f.endswith(".xlsx")),
+        None,
+    )
+
+    if not fitness_file_name:
+        logger.warning("No fitness excel file found in destination")
+        raise HTTPException(
+            status_code=404,
+            detail="Fitness Excel file not found in destination folder",
+        )
+
+    fitness_file_path = Path(dest_folder) / fitness_file_name
+
+    # ---- LOAD EXCEL & READ EXISTING IMAGES ----
+    try:
+        workbook = open_workbook(fitness_file_path)
+        sheet = get_excel_sheet(workbook, "Daily Data")
+    except Exception as e:
+        logger.exception("Failed to read fitness excel or sheet")
+        raise HTTPException(status_code=500, detail=str(e))
+
+    processed_images = read_column_values(sheet, col="B")  # list of image names
+    processed_set = set(processed_images)
+
+    # ---- LIST IMAGES IN SOURCE ----
+    try:
+        logger.info("Listing images for source folder=%s", source_folder)
+        image_paths: List[Path] = list_folder_images(source_folder)
+    except FileNotFoundError as e:
+        logger.warning("Source folder not found: %s", e)
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.exception("Failed to list images from source folder")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error reading source folder: {e}",
+        )
+
+    if not image_paths:
+        logger.warning("No images found in source folder=%s", source_folder)
+        return UpdateFolderResponse(
+            folder_name=source_folder,
+            destination_folder=dest_folder,
+            new_images_processed=0,
+            results=[],
+        )
+
+    results: List[ImageResult] = []
+
+    # ---- PROCESS NEW IMAGES ----
+    for img_path in image_paths:
+        img_name = img_path.name
+
+        if img_name in processed_set:
+            logger.info("Skipping already processed image: %s", img_name)
+            continue
+
+        logger.info("Processing new image: %s", img_path)
+
+        try:
+            text = ocr_image(img_path)
+        except Exception:
+            logger.exception("OCR failed for image %s", img_path)
+            # Skip this image
+            continue
+
+        try:
+            health_data = extract_health_data_from_text(text)
+        except LLMExtractionError as e:
+            logger.warning("LLM extraction failed for image %s: %s", img_path, e)
+            raise HTTPException(
+                status_code=500,
+                detail=f"LLM JSON extraction failed for {img_name}: {e}",
+            )
+        except Exception as e:
+            logger.exception("Unexpected LLM error for image %s", img_name)
+            raise HTTPException(
+                status_code=500,
+                detail=f"Unexpected LLM error for {img_name}: {e}",
+            )
+
+        results.append(
+            ImageResult(
+                filename=img_name,
+                raw_text=text,
+                health_data=health_data,
+            )
+        )
+
+    # ---- SAVE UPDATED EXCEL ----
+    try:
+        updated_count = update_results_to_excel(
+            folder_name=req.folder_name,
+            results=results,
+            excel_path=fitness_file_path
+        )
+
+        updated_file = generate_daily_summary(
+            excel_path=Path(fitness_file_path)
+        )
+        print("Summary updated in:", updated_file)
+
+    except Exception as e:
+        logger.exception("Failed to save fitness excel")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error saving updated Excel: {e}",
+        )
+
+    return UpdateFolderResponse(
+        folder_name=source_folder,
+        destination_folder=dest_folder,
+        new_images_processed=len(results),
+        results=results,
+    )
+
+def list_local_files(folder: str) -> List[str]:
+    return [f.name for f in Path(folder).iterdir() if f.is_file()]
+
+def open_workbook(path: Path):
+    import openpyxl
+    return openpyxl.load_workbook(path)
+
+def get_excel_sheet(workbook, sheet_name: str):
+    return workbook[sheet_name]
+
+def read_column_values(sheet, col: str) -> List[str]:
+    return [cell.value for cell in sheet[col] if cell.value]
+
+def append_row_to_sheet(sheet, values: List):
+    sheet.append(values)
+
+def save_workbook(workbook, path: Path):
+    workbook.save(path)
+
 
 
 # @app.get("/export-folder/{folder_name}")

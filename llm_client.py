@@ -19,6 +19,8 @@ class LLMExtractionError(Exception):
 
 
 def build_extraction_prompt(text: str) -> str:
+
+    print(f"llm text === {text}")
     """
     Ask the model to extract numeric metrics + workout_type.
     workout_type must be one of: sport, strength_training, cardio, yoga.
@@ -35,13 +37,14 @@ def build_extraction_prompt(text: str) -> str:
     - workout_type ("cardio", "sport", "strength_training", "yoga", or empty string if not available)
 
     Workout_type rules:
-    - "cardio": run, treadmill, cycling, walking
+    - "cardio": run, treadmill, cycling, swimming, rowing, elliptical
     - "sport": games like cricket, football, basketball, tennis, table tennis, etc.
     - "strength_training": gym, weights, resistance, bodyweight exercises, dance, HIIT
     - "yoga": yoga, stretching, meditation
     - null: if no workout described
     - IMPORTANT if you are not clear about the workout type, then make it null.
     - IMPORTANT if there is no walking or steps mentioned, make steps 0.
+    - IMPORTANT if there is no Workout_type and only Steps mentioned then workout_type should be null.
 
     Text:
     {text}
@@ -144,8 +147,15 @@ def parse_health_json(raw: str) -> HealthData:
             v_norm = aliases[v_norm]
         return v_norm if v_norm in allowed else None
 
+    steps1 = to_int(obj.get("steps"))
+
+    if steps1 is not None and steps1 > 40000:
+        steps1 = 20000
+    else:
+        steps1 = 0
+
     health = HealthData(
-        steps=to_int(obj.get("steps")),
+        steps=steps1,
         calories_kcal=to_float(obj.get("calories_kcal")),
         distance_km=to_float(obj.get("distance_km")),
         active_time_minutes=to_float(obj.get("active_time_minutes")),
@@ -156,11 +166,25 @@ def parse_health_json(raw: str) -> HealthData:
 
 
 def extract_health_data_from_text(text: str) -> HealthData:
+    # Guard clause: skip LLM if OCR text is empty
+    if not text or not text.strip():
+        return empty_health_data()
+
     prompt = build_extraction_prompt(text)
     #raw = call_ollama(prompt)
     raw = call_togather_ai(prompt)
     health = parse_health_json(raw)
     return health
+
+def empty_health_data() -> HealthData:
+    return HealthData(
+        steps=0,
+        calories_kcal=0,
+        distance_km=0,
+        active_time_minutes=0,
+        workout_type='',
+        total_points=0
+    )
 
 def calculate_points(steps: int = 0 , workout_type: str = '') -> int:
     # Workout points mapping

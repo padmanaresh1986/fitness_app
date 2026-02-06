@@ -6,6 +6,7 @@ from contextlib import contextmanager
 from typing import Generator, Iterable, List
 import pandas as pd
 from datetime import datetime
+from pathlib import Path
 
 from sqlalchemy import (
     Column,
@@ -191,8 +192,17 @@ def export_records_to_excel(records: list[dict], output_dir="."):
     """
     Sheet 1: Raw daily data
     Sheet 2: Grouped summary by email
+    Rules:
+    - For same workout_type per user, take highest total_points
+    - Sum those points per user
+    - Add step-based points after aggregation
     Returns: (file_path, file_name)
     """
+
+    import os
+    import pandas as pd
+    import numpy as np
+    from datetime import datetime
 
     df = pd.DataFrame(records)
 
@@ -202,45 +212,80 @@ def export_records_to_excel(records: list[dict], output_dir="."):
     file_name = f"fitness_data_{timestamp}.xlsx"
     file_path = os.path.join(output_dir, file_name)
 
-    # -------------------------
-    # Prepare summary sheet
-    # -------------------------
-    summary_df = (
-        df.groupby("email", as_index=False)
-        .agg({
-            "steps": "max",  # highest steps per user
-            "calories_kcal": "sum",
-            "distance_km": "sum",
-            "active_time_minutes": "sum",
-            "total_points": "sum",  # base points
-            "workout_type": lambda x: ", ".join(sorted(set(filter(None, x))))
-        })
+    # -------------------------------------------------
+    # Step 1: Max points per (email, workout_type)
+    # -------------------------------------------------
+    workout_points_df = (
+        df.groupby(["email", "workout_type"], as_index=False)
+          .agg({"total_points": "max"})
     )
 
-    # -------------------------
-    # Step points calculation
-    # -------------------------
+    # -------------------------------------------------
+    # Step 2: Sum workout points per email
+    # -------------------------------------------------
+    points_per_user_df = (
+        workout_points_df.groupby("email", as_index=False)
+                          .agg({"total_points": "sum"})
+    )
+
+    # -------------------------------------------------
+    # Step 3: Main aggregation (excluding total_points)
+    # -------------------------------------------------
+    summary_df = (
+        df.groupby("email", as_index=False)
+          .agg({
+              "steps": "max",
+              "calories_kcal": "sum",
+              "distance_km": "sum",
+              "active_time_minutes": "sum",
+              "workout_type": lambda x: "; ".join(sorted(set(filter(None, x)))),
+          })
+    )
+
+    # -------------------------------------------------
+    # Step 4: Merge corrected total_points
+    # -------------------------------------------------
+    summary_df = summary_df.merge(
+        points_per_user_df,
+        on="email",
+        how="left"
+    )
+
+    summary_df["total_points"] = summary_df["total_points"].fillna(0)
+
+    # -------------------------------------------------
+    # Step 5: Step points calculation
+    # -------------------------------------------------
     summary_df["step_points"] = np.select(
         [
+            summary_df["steps"] <= 0,
             summary_df["steps"] <= 5000,
             summary_df["steps"] <= 8000,
             summary_df["steps"] <= 10000,
             summary_df["steps"] <= 15000,
             summary_df["steps"] <= 20000,
         ],
-        [25, 35, 80, 150, 300],
+        [0, 25, 35, 80, 150, 300],
         default=500
     )
 
-    # Add step points to total points
     summary_df["total_points"] += summary_df["step_points"]
 
-    # Optional: remove step_points column from final output
+    # -------------------------------------------------
+    # Step 6: Daily bonus points (100 per user per day)
+    # -------------------------------------------------
+    summary_df["total_points"] += 100
+
     summary_df.drop(columns=["step_points"], inplace=True)
 
-    # -------------------------
-    # Rename columns for clarity
-    # -------------------------
+    # -------------------------------------------------
+    # Step 7: Add DailyRank column based on total_points
+    # -------------------------------------------------
+    summary_df["DailyRank"] = summary_df["total_points"].rank(method="min", ascending=False)
+
+    # -------------------------------------------------
+    # Step 8: Rename columns for clarity
+    # -------------------------------------------------
     summary_df.rename(columns={
         "steps": "total_steps",
         "calories_kcal": "total_calories_kcal",
@@ -249,9 +294,9 @@ def export_records_to_excel(records: list[dict], output_dir="."):
         "workout_type": "workout_types"
     }, inplace=True)
 
-    # -------------------------
-    # Write Excel file
-    # -------------------------
+    # -------------------------------------------------
+    # Step 9: Write Excel file
+    # -------------------------------------------------
     with pd.ExcelWriter(file_path, engine="xlsxwriter") as writer:
         df.to_excel(writer, sheet_name="Daily Data", index=False)
         summary_df.to_excel(writer, sheet_name="Daily Summary", index=False)
@@ -260,12 +305,205 @@ def export_records_to_excel(records: list[dict], output_dir="."):
 
 
 
+def generate_daily_summary(
+    excel_path: Path,
+    output_path: Path | None = None
+) -> Path:
+    """
+    Reads existing 'Daily Data' sheet from the given excel file,
+    generates the summary sheet,
+    and writes the 'Daily Summary' sheet back into the same file
+    (or into a new copy at output_path if provided).
+    """
+
+    if not excel_path.exists():
+        raise FileNotFoundError(f"Excel file not found: {excel_path}")
+
+    # Load Daily Data
+    df = pd.read_excel(excel_path, sheet_name="Daily Data")
+
+    # -------------------------------------------------
+    # Step 0 (NEW): Clean workout_type column
+    # -------------------------------------------------
+    df["workout_type"] = df["workout_type"].where(
+        df["workout_type"].apply(lambda v: isinstance(v, str))
+    )
+
+    # -------------------------------------------------
+    # Step 1: Max points per (email, workout_type)
+    # -------------------------------------------------
+    workout_points_df = (
+        df.groupby(["email", "workout_type"], as_index=False)
+          .agg({"total_points": "max"})
+    )
+
+    # -------------------------------------------------
+    # Step 2: Sum workout points per email
+    # -------------------------------------------------
+    points_per_user_df = (
+        workout_points_df.groupby("email", as_index=False)
+                          .agg({"total_points": "sum"})
+    )
+
+    # -------------------------------------------------
+    # Step 3: Main aggregation (excluding total_points)
+    # -------------------------------------------------
+    summary_df = (
+        df.groupby("email", as_index=False)
+          .agg({
+              "steps": "max",
+              "calories_kcal": "sum",
+              "distance_km": "sum",
+              "active_time_minutes": "sum",
+              "workout_type": lambda x: ";#".join(
+                  sorted({v for v in x if isinstance(v, str) and v.strip()})
+              ),
+          })
+    )
+
+    # -------------------------------------------------
+    # Step 4: Merge corrected total_points
+    # -------------------------------------------------
+    summary_df = summary_df.merge(
+        points_per_user_df,
+        on="email",
+        how="left"
+    )
+
+    summary_df["total_points"] = summary_df["total_points"].fillna(0)
+
+    # -------------------------------------------------
+    # Step 5: Step points calculation
+    # -------------------------------------------------
+    summary_df["step_points"] = np.select(
+        [
+            summary_df["steps"] <= 0,
+            summary_df["steps"] <= 5000,
+            summary_df["steps"] <= 8000,
+            summary_df["steps"] <= 10000,
+            summary_df["steps"] <= 15000,
+            summary_df["steps"] <= 20000,
+        ],
+        [0, 25, 35, 80, 150, 300],
+        default=500
+    )
+
+    summary_df["total_points"] += summary_df["step_points"]
+
+    # -------------------------------------------------
+    # Step 6: Daily bonus points
+    # -------------------------------------------------
+    summary_df["total_points"] += 100
+    summary_df.drop(columns=["step_points"], inplace=True)
+
+    # -------------------------------------------------
+    # Step 7: Add DailyRank column
+    # -------------------------------------------------
+    summary_df["DailyRank"] = summary_df["total_points"].rank(
+        method="min", ascending=False
+    )
+
+    # -------------------------------------------------
+    # Step 8: Rename columns
+    # -------------------------------------------------
+    summary_df.rename(columns={
+        "steps": "total_steps",
+        "calories_kcal": "total_calories_kcal",
+        "distance_km": "total_distance_km",
+        "active_time_minutes": "total_active_time_minutes",
+        "workout_type": "workout_types"
+    }, inplace=True)
+
+    # -------------------------------------------------
+    # Write Updated/Added Summary Sheet
+    # -------------------------------------------------
+    save_path = output_path if output_path else excel_path
+
+    with pd.ExcelWriter(
+        save_path,
+        engine="openpyxl",
+        mode="a",
+        if_sheet_exists="replace"
+    ) as writer:
+        summary_df.to_excel(writer, sheet_name="Daily Summary", index=False)
+
+    return save_path
+
+
+def update_results_to_excel(
+    folder_name: str,
+    results: Iterable[ImageResult],
+    excel_path: Path,
+) -> int:
+    """
+    Append new rows to existing fitness Excel.
+    - Updates ONLY 'Daily Data' sheet
+    - Does NOT touch 'Daily Summary'
+    """
+
+    if not excel_path.exists():
+        raise FileNotFoundError(f"Excel file not found: {excel_path}")
+
+    # ----------------------------
+    # Convert ImageResult → dict
+    # ----------------------------
+    new_records: List[dict] = []
+
+    for r in results:
+        h: HealthData = r.health_data
+
+        new_records.append({
+            "folder_name": folder_name,
+            "filename": r.filename,
+            "email": r.filename.partition("_")[0],
+            "steps": h.steps,
+            "calories_kcal": h.calories_kcal,
+            "distance_km": h.distance_km,
+            "active_time_minutes": h.active_time_minutes,
+            "workout_type": h.workout_type,
+            "total_points": h.total_points,
+        })
+
+    if not new_records:
+        return 0
+
+    new_df = pd.DataFrame(new_records)
+
+    # ----------------------------
+    # Load existing Daily Data
+    # ----------------------------
+    existing_df = pd.read_excel(
+        excel_path,
+        sheet_name="Daily Data"
+    )
+
+    # ----------------------------
+    # Append & save
+    # ----------------------------
+    updated_df = pd.concat(
+        [existing_df, new_df],
+        ignore_index=True
+    )
+
+    with pd.ExcelWriter(
+        excel_path,
+        engine="openpyxl",
+        mode="a",
+        if_sheet_exists="replace"
+    ) as writer:
+        updated_df.to_excel(writer, sheet_name="Daily Data", index=False)
+
+    return len(new_records)
+
+
+
+
 def generate_leaderboard(data_folder: str, output_folder: str):
     """
     Aggregate all daily summary sheets and create a leaderboard Excel.
 
     :param data_folder: Path containing date folders with daily Excel files.
-    :param output_folder: Folder where the final 'leader_board.xls' will be saved.
+    :param output_folder: Folder where the final 'leader_board.xlsx' will be saved.
     :return: Path to the saved leaderboard Excel file.
     """
     all_summary_dfs = []
@@ -285,32 +523,67 @@ def generate_leaderboard(data_folder: str, output_folder: str):
     if not all_summary_dfs:
         raise ValueError("No Daily Summary sheets found in the given data folder.")
 
+    # -------------------------------------------------
     # Combine all summaries
+    # -------------------------------------------------
     combined_df = pd.concat(all_summary_dfs, ignore_index=True)
 
+    # -------------------------------------------------
     # Aggregate by email
+    # -------------------------------------------------
     leaderboard_df = combined_df.groupby('email', as_index=False).agg({
         'total_steps': 'sum',
         'total_calories_kcal': 'sum',
         'total_distance_km': 'sum',
         'total_active_time_minutes': 'sum',
         'total_points': 'sum',
-        'workout_types': lambda x: ", ".join(sorted(set(",".join(x).split(","))))
+        'workout_types': lambda x: ", ".join(
+            sorted(
+                {
+                    s.strip()
+                    for s in ";".join(x.dropna().astype(str)).split(";")
+                    if s.strip()
+                }
+            )
+        )
     })
 
-    # Rank by total_points descending
-    leaderboard_df = leaderboard_df.sort_values(by='total_points', ascending=False)
-    leaderboard_df['rank'] = range(1, len(leaderboard_df) + 1)
+    # -------------------------------------------------
+    # Rank by total_points (same points → same rank)
+    # -------------------------------------------------
+    leaderboard_df = leaderboard_df.sort_values(
+        by='total_points',
+        ascending=False
+    )
 
+    leaderboard_df['rank'] = leaderboard_df['total_points'].rank(
+        method='min',
+        ascending=False
+    ).astype(int)
+
+    # -------------------------------------------------
     # Reorder columns
-    cols = ['rank', 'email', 'total_steps', 'total_calories_kcal', 'total_distance_km',
-            'total_active_time_minutes', 'total_points', 'workout_types']
+    # -------------------------------------------------
+    cols = [
+        'rank',
+        'email',
+        'total_steps',
+        'total_calories_kcal',
+        'total_distance_km',
+        'total_active_time_minutes',
+        'total_points',
+        'workout_types'
+    ]
     leaderboard_df = leaderboard_df[cols]
 
+    # -------------------------------------------------
     # Ensure output folder exists
+    # -------------------------------------------------
     os.makedirs(output_folder, exist_ok=True)
 
+    # -------------------------------------------------
     # Save leaderboard Excel
+    # -------------------------------------------------
     output_file = os.path.join(output_folder, "leader_board.xlsx")
     leaderboard_df.to_excel(output_file, index=False, sheet_name="Leaderboard")
 
